@@ -206,12 +206,6 @@ Aplicamos otimização via **Youden Index**.
 
 ---
 
-Perfeito — vou te entregar a **seção final completa corrigida**, agora com **TODOS os modelos e TODAS as métricas** exatamente como saíram do script.
-
-Substitua toda essa parte do README por isto 👇
-
----
-
 # 🏁 Resultados Finais
 
 ## 📊 Baseline (threshold = 0.50)
