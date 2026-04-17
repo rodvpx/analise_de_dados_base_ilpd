@@ -1,0 +1,154 @@
+############################################################
+> # 25. COMPARAÇÃO COM O ARTIGO DOS COLEGAS
+> ######################################### .... [TRUNCATED] 
+
+> cat("\n=== REFERÊNCIA DOS COLEGAS (Acurácia sem CFS, base completa) ===\n")
+
+=== REFERÊNCIA DOS COLEGAS (Acurácia sem CFS, base completa) ===
+
+> print(colegas)
+             Fonte              Modelo ACC_SemCFS
+1 Colegas (artigo) Regressão Logística       75.3
+2 Colegas (artigo)                 GLM       73.0
+3 Colegas (artigo)                 SVM       70.7
+4 Colegas (artigo)       Random Forest       70.7
+5 Colegas (artigo)   SVM Class Weights       71.3
+6 Colegas (artigo)                 ANN       69.5
+7 Colegas (artigo)         Gaussian NB       59.8
+
+> cat("\n=== COMPARATIVO NOSSO vs COLEGAS ===\n")
+
+=== COMPARATIVO NOSSO vs COLEGAS ===
+
+> cat("Melhor dos colegas: RL = 75.3%\n")
+Melhor dos colegas: RL = 75.3%
+
+> cat(sprintf("Nosso melhor Accuracy (base):         %.1f%%\n", max(tab_base$Accuracy) * 100))
+Nosso melhor Accuracy (base):         70.8%
+
+> cat(sprintf("Nosso melhor Accuracy (thr opt.):     %.1f%%\n", max(tab_thr$Accuracy) * 100))
+Nosso melhor Accuracy (thr opt.):     71.7%
+
+> cat(sprintf("Nosso melhor AUC:                     %.4f\n",   max(tab_thr$AUC)))
+Nosso melhor AUC:                     0.7640
+
+> cat(sprintf("Nosso melhor F1:                      %.3f\n",   max(tab_thr$F1)))
+Nosso melhor F1:                      0.822
+
+> cat(sprintf("Regressão Logística — Accuracy (base):       %.1f%%\n",
++             tab_base$Accuracy[tab_base$Modelo == "Regressão Logística"] * 100 .... [TRUNCATED] 
+Regressão Logística — Accuracy (base):       65.5%
+
+> cat(sprintf("Regressão Logística — Accuracy (thr opt.):   %.1f%%\n",
++             tab_thr$Accuracy[grepl("Regressão Logística", tab_thr$Modelo)] *  .... [TRUNCATED] 
+Regressão Logística — Accuracy (thr opt.):   65.5%
+
+> ############################################################
+> # 26. RESULTADO FINAL CONSOLIDADO
+> ################################################# .... [TRUNCATED] 
+
+
+> cat("=============================================================\n")
+=============================================================
+
+> cat("        RESULTADOS FINAIS — ILPD (seed=123, 80/20)          \n")
+        RESULTADOS FINAIS — ILPD (seed=123, 80/20)          
+
+> cat("=============================================================\n")
+=============================================================
+
+> cat("\n--- Tabela 1: Treino vs Teste — baseline (thr = 0.50) ---\n")
+
+--- Tabela 1: Treino vs Teste — baseline (thr = 0.50) ---
+
+> print(tab_split_base)
+               Modelo Threshold Train_Acc Train_AUC Train_Sens Train_Spec Train_F1 Test_Acc Test_AUC
+1        XGB GBLinear       0.5     0.630     0.773      0.554      0.818    0.681    0.655    0.764
+2       Random Forest       0.5     1.000     1.000      1.000      1.000    1.000    0.708    0.751
+3          SVM Radial       0.5     0.746     0.791      0.865      0.455    0.829    0.673    0.749
+4      Ensemble Stack       0.5     0.829     0.943      0.809      0.879    0.871    0.664    0.745
+5         Elastic Net       0.5     0.661     0.781      0.594      0.826    0.713    0.664    0.742
+6 Regressão Logística       0.5     0.656     0.781      0.594      0.811    0.711    0.655    0.728
+7                 GBM       0.5     0.864     0.950      0.831      0.947    0.897    0.664    0.715
+8            XGB DART       0.5     0.834     0.961      0.788      0.947    0.871    0.664    0.704
+  Test_Sens Test_Spec Test_F1
+1     0.580     0.844   0.707
+2     0.926     0.156   0.820
+3     0.877     0.156   0.793
+4     0.691     0.594   0.747
+5     0.617     0.781   0.725
+6     0.630     0.719   0.723
+7     0.691     0.594   0.747
+8     0.704     0.562   0.750
+
+> cat("\n--- Tabela 2: Treino vs Teste — threshold otimizado (Youden) ---\n")
+
+--- Tabela 2: Treino vs Teste — threshold otimizado (Youden) ---
+
+> print(tab_split_thr)
+               Modelo Threshold Train_Acc Train_AUC Train_Sens Train_Spec Train_F1 Test_Acc Test_AUC
+1        XGB GBLinear     0.448     0.698     0.773      0.658      0.795    0.756    0.699    0.764
+2       Random Forest     0.514     1.000     1.000      1.000      1.000    1.000    0.717    0.751
+3          SVM Radial     0.689     0.702     0.791      0.655      0.818    0.758    0.673    0.749
+4      Ensemble Stack     0.465     0.862     0.943      0.868      0.848    0.900    0.708    0.745
+5         Elastic Net     0.449     0.707     0.781      0.680      0.773    0.767    0.655    0.742
+6 Regressão Logística     0.451     0.705     0.781      0.680      0.765    0.766    0.655    0.728
+7                 GBM     0.470     0.880     0.950      0.858      0.932    0.910    0.664    0.715
+8            XGB DART     0.448     0.888     0.961      0.874      0.924    0.918    0.664    0.704
+  Test_Sens Test_Spec Test_F1
+1     0.679     0.750   0.764
+2     0.914     0.219   0.822
+3     0.642     0.750   0.738
+4     0.802     0.469   0.798
+5     0.667     0.625   0.735
+6     0.667     0.625   0.735
+7     0.704     0.562   0.750
+8     0.765     0.406   0.765
+
+> cat("\n--- Tabela 3: Apenas Teste — baseline ---\n")
+
+--- Tabela 3: Apenas Teste — baseline ---
+
+> print(tab_base)
+               Modelo Threshold Accuracy   AUC Sensitivity Specificity Precision    F1
+1        XGB GBLinear       0.5    0.655 0.764       0.580       0.844     0.904 0.707
+2       Random Forest       0.5    0.708 0.751       0.926       0.156     0.735 0.820
+3          SVM Radial       0.5    0.673 0.749       0.877       0.156     0.724 0.793
+4      Ensemble Stack       0.5    0.664 0.745       0.691       0.594     0.812 0.747
+5    Elastic Net (LR)       0.5    0.664 0.742       0.617       0.781     0.877 0.725
+6 Regressão Logística       0.5    0.655 0.728       0.630       0.719     0.850 0.723
+7                 GBM       0.5    0.664 0.715       0.691       0.594     0.812 0.747
+8            XGB DART       0.5    0.664 0.704       0.704       0.562     0.803 0.750
+
+> cat("\n--- Tabela 4: Apenas Teste — threshold otimizado ---\n")
+
+--- Tabela 4: Apenas Teste — threshold otimizado ---
+
+> print(tab_thr)
+                          Modelo Threshold Accuracy   AUC Sensitivity Specificity Precision    F1
+1        XGB GBLinear (thr opt.)     0.448    0.699 0.764       0.679       0.750     0.873 0.764
+2       Random Forest (thr opt.)     0.514    0.717 0.751       0.914       0.219     0.747 0.822
+3          SVM Radial (thr opt.)     0.689    0.673 0.749       0.642       0.750     0.867 0.738
+4      Ensemble Stack (thr opt.)     0.465    0.708 0.745       0.802       0.469     0.793 0.798
+5         Elastic Net (thr opt.)     0.449    0.655 0.742       0.667       0.625     0.818 0.735
+6 Regressão Logística (thr opt.)     0.451    0.655 0.728       0.667       0.625     0.818 0.735
+7                 GBM (thr opt.)     0.470    0.664 0.715       0.704       0.562     0.803 0.750
+8            XGB DART (thr opt.)     0.448    0.664 0.704       0.765       0.406     0.765 0.765
+
+> cat("\n--- Melhor Modelo ---\n")
+
+--- Melhor Modelo ---
+
+> cat("Modelo:", best_name, "\n")
+Modelo: XGB GBLinear (thr opt.) 
+
+> cat("AUC:", todos$AUC[1],
++     "| Accuracy:", todos$Accuracy[1],
++     "| Sensitivity:", todos$Sensitivity[1],
++     "| Specificity:", todos$Specif .... [TRUNCATED] 
+AUC: 0.764 | Accuracy: 0.699 | Sensitivity: 0.679 | Specificity: 0.75 | F1: 0.764 
+
+> cat("=============================================================\n")
+=============================================================
+Houve 37 avisos (use warnings() para vê-los)
+> 
