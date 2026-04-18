@@ -2,54 +2,38 @@
 # Análise: Indian Liver Patient Dataset (ILPD)
 # Estratégia: seleção padronizada de variáveis, avaliação treino/teste,
 #             feature engineering e ensemble com stacking
-#
-# Melhorias em relação à versão anterior:
-#   [FIX 1] Seleção de variáveis (StepAIC) feita ANTES da modelagem,
-#           garantindo que o mesmo conjunto de variáveis seja usado
-#           por todos os modelos.
-#   [FIX 2] Avaliação reportada tanto no TREINO quanto no TESTE,
-#           permitindo diagnóstico de overfitting em cada modelo.
-#   [FIX 3] Justificativas claras para a seleção de variáveis,
-#           pesos de classe e decisões metodológicas documentadas.
-#   [NEW]   Regressão Logística pura adicionada (modelo dos colegas)
-#           para comparação direta na mesma pipeline.
-#   [NEW]   Regressão Logística treinada no conjunto original
-#           para comparação direta com o artigo base.
-#
-# Seed: 123 | Split: 80/20
 # ============================================================
 
 ############################################################
 # 0. INSTALAÇÃO DE PACOTES (EXECUTAR UMA VEZ SE NECESSÁRIO)
 ############################################################
 
+# Função auxiliar para instalar e carregar pacotes automaticamente
 # install_if_missing <- function(p) {
 #   if (!require(p, character.only = TRUE)) install.packages(p)
 # }
 # lapply(c("dplyr", "ggplot2", "caret", "randomForest", "e1071",
-#          "xgboost", "pROC", "tidyr", "MASS", "DMwR2", "gbm",
-#          "glmnet", "kernlab", "tibble", "gridExtra"), install_if_missing)
+#          "xgboost", "pROC", "tidyr", "MASS", "glmnet",
+#          "tibble", "gridExtra"), install_if_missing)
 
 ############################################################
 # 1. PACOTES
 ############################################################
 
-library(dplyr)
-library(ggplot2)
-library(caret)
-library(randomForest)
-library(e1071)
-library(xgboost)
-library(pROC)
-library(tidyr)
-library(MASS)
-library(gbm)
-library(glmnet)
-library(tibble)
-library(gridExtra)
-
-# Não usamos balanceamento sintético nesta versão; apenas o treino original e, quando aplicável,
-# pesos de classe para reduzir viés em bases desbalanceadas.
+# Carregamento das bibliotecas essenciais para manipulação de dados,
+# modelagem preditiva, cálculos de métricas e visualização.
+library(dplyr)        # Manipulação de dados
+library(ggplot2)      # Visualização gráfica
+library(caret)        # Pipeline de Machine Learning
+library(randomForest) # Algoritmo Random Forest
+library(e1071)        # Algoritmo SVM (Support Vector Machine)
+library(xgboost)      # Algoritmo XGBoost (Gradient Boosting)
+library(pROC)         # Análise de curvas ROC e AUC
+library(tidyr)        # Manipulação e pivotamento de tabelas
+library(MASS)         # Funções estatísticas (ex: StepAIC)
+library(glmnet)       # Algoritmo Elastic Net
+library(tibble)       # Estruturas de dados (DataFrames modernos)
+library(gridExtra)    # Arranjos gráficos complexos
 
 ############################################################
 # 2. CARREGAMENTO DOS DADOS
@@ -57,9 +41,11 @@ library(gridExtra)
 
 path_base <- "Indian Liver Patient Dataset (ILPD).csv"
 
+# Definindo nomes descritivos para as colunas com base na documentação do dataset
 col_names <- c("Age", "Gender", "TB", "DB", "Alkphos",
                "SGPT", "SGOT", "TP", "ALB", "AG_Ratio", "Selector")
 
+# Carrega o arquivo CSV sem cabeçalho original, atribuindo os nomes definidos
 df <- read.csv(path_base, header = FALSE, col.names = col_names,
                stringsAsFactors = FALSE)
 
@@ -71,47 +57,53 @@ print(table(df$Selector))
 # 3. PRÉ-PROCESSAMENTO
 ############################################################
 
-# 3.1 Remover duplicatas exatas
+# Removemos linhas idênticas para evitar viés no treinamento
 df <- df[!duplicated(df), ]
 cat("Após remoção de duplicatas:", nrow(df), "linhas\n")
 
-# 3.2 Converter Gender para binário (Male=1, Female=0)
+# Transformamos a variável 'Gender' categórica para formato binário numérico
 df$Gender <- ifelse(df$Gender == "Male", 1L, 0L)
 
-# 3.3 Imputar AG_Ratio (5 valores ausentes) com mediana do dataset
-#     Mediana é mais robusta que média diante dos outliers típicos de
-#     exames laboratoriais com assimetria positiva.
+# Identificamos e imputamos valores ausentes em AG_Ratio
+# Usamos a mediana pois ela é mais robusta a outliers do que a média.
 if (any(is.na(df$AG_Ratio))) {
   med_ag <- median(df$AG_Ratio, na.rm = TRUE)
   df$AG_Ratio[is.na(df$AG_Ratio)] <- med_ag
-  cat("AG_Ratio: NAs imputados com mediana =", med_ag, "\n")
 }
 
-# 3.4 Converter alvo: 1 = Doença Hepática (Yes), 2 = Saudável (No)
+# A variável alvo é convertida de 1/2 para "Yes" (Doente) e "No" (Saudável)
+# Garantimos que seja tratada como fator para problemas de classificação.
 df$Selector <- ifelse(df$Selector == 1, "Yes", "No")
 df$Selector <- factor(df$Selector, levels = c("No", "Yes"))
 
 target <- "Selector"
 
 ############################################################
-# 4. FEATURE ENGINEERING
+# 4. FEATURE ENGINEERING MÉDICA
 ############################################################
-# Criamos variáveis derivadas com significado clínico estabelecido
-# na literatura de hepatologia. Isso enriquece o espaço de atributos
-# sem violar o processo de separação treino/teste, pois são
-# transformações determinísticas das variáveis originais.
+# Criamos novas variáveis baseadas em conhecimento clínico hepatológico 
+# para enriquecer os dados e fornecer melhores sinais aos modelos.
+
+eps <- 1e-6 # Valor ínfimo para evitar divisão por zero
+
+# Razões clássicas entre enzimas
+df$AST_ALT_ratio   <- df$SGOT / (df$SGPT + eps)
+df$Bilirubin_ratio <- df$DB / (df$TB + eps)
+df$Protein_ratio   <- df$ALB / (df$TP + eps)
 
 df <- df %>%
   mutate(
-    # Razão TB/DB: diferencia hiperbilirrubinemia direta vs indireta
+    # Razão TB/DB para checar hiperbilirrubinemia
     TB_DB_ratio     = ifelse(DB > 0, TB / DB, TB),
-    # Razão SGPT/SGOT: indica origem celular do dano (>2 sugere hepatite alcoólica)
+    # Relação SGPT/SGOT ajuda a detectar danos específicos hepáticos
     SGPT_SGOT_ratio = ifelse(SGOT > 0, SGPT / SGOT, SGPT),
-    # Bilirrubina indireta: marcador de hemólise e disfunção hepática
+    # Bilirrubina Indireta (Total - Direta)
     Indirect_Bili   = TB - DB,
-    # Globulina: estimada como TP - ALB, indica resposta inflamatória
+    # Globulina: diferença entre Proteínas Totais e Albumina
     Globulin        = TP - ALB,
-    # Transformações log: reduzem a assimetria das enzimas (distribuição mais próxima da normal)
+    
+    # Aplicação de log(1+x) para normalizar a distribuição 
+    # extremamente assimétrica das enzimas hepáticas
     log_SGPT        = log1p(SGPT),
     log_SGOT        = log1p(SGOT),
     log_Alkphos     = log1p(Alkphos),
@@ -124,39 +116,35 @@ cat("\nFeatures após engenharia:", ncol(df) - 1, "\n")
 ############################################################
 # 5. SPLIT TREINO / TESTE (80 / 20, seed = 123)
 ############################################################
-# createDataPartition realiza estratificação pela variável alvo,
-# preservando a proporção de classes (71% Yes / 29% No) em ambos
-# os conjuntos. Isso é essencial para avaliação não enviesada.
 
+# Garantimos reprodutibilidade através da semente
 set.seed(123)
+
+# 'createDataPartition' faz um particionamento estratificado, 
+# preservando a mesma proporção da classe alvo no treino e teste.
 train_index <- createDataPartition(df[[target]], p = 0.80, list = FALSE)
 
 train_raw <- df[train_index, ]
 test_raw  <- df[-train_index, ]
 
 cat("\nTreino:", nrow(train_raw), "| Teste:", nrow(test_raw), "\n")
-cat("Distribuição treino:\n"); print(table(train_raw[[target]]))
-cat("Distribuição teste:\n");  print(table(test_raw[[target]]))
 
 ############################################################
-# 6. NORMALIZAÇÃO (center + scale)
+# 6. SELEÇÃO DE VARIÁVEIS — StepAIC backward
 ############################################################
-# O pré-processamento de escala é ajustado SOMENTE no treino e
-# depois aplicado ao teste. Isso evita data leakage: o modelo de
-# normalização não "vê" o conjunto de teste antes do momento de avaliação.
 
 predictor_names <- setdiff(names(train_raw), target)
 
-# 6.1 Remover near-zero variance (variáveis sem poder discriminativo)
+# Remove variáveis com "Near Zero Variance" (que quase não mudam de valor)
+# pois não agregam poder discriminativo.
 nzv_idx <- nearZeroVar(train_raw[, predictor_names])
 if (length(nzv_idx) > 0) {
   cat("Removidas por NZV:", length(nzv_idx), "variáveis\n")
   predictor_names <- predictor_names[-nzv_idx]
 }
 
-# 6.2 Remover alta correlação (> 0.95)
-#     Correlação extrema indica redundância; manter apenas uma das variáveis
-#     preserva a informação sem inflar a dimensionalidade.
+# Remove uma dentre variáveis altamente correlacionadas (>95%) 
+# para evitar redundância de informações
 num_mask <- sapply(train_raw[, predictor_names], is.numeric)
 if (sum(num_mask) > 1) {
   cor_mat  <- cor(train_raw[, predictor_names[num_mask]], use = "pairwise.complete.obs")
@@ -168,103 +156,89 @@ if (sum(num_mask) > 1) {
   }
 }
 
-# 6.3 Normalizar: ajuste no treino, aplica em treino E teste
-pre_proc <- preProcess(train_raw[, predictor_names], method = c("center", "scale"))
-
-train_x <- predict(pre_proc, train_raw[, predictor_names])
-test_x  <- predict(pre_proc, test_raw[, predictor_names])
-
-train_norm <- cbind(train_x, Selector = train_raw[[target]])
-test_norm  <- cbind(test_x,  Selector = test_raw[[target]])
-
-predictor_names <- setdiff(names(train_norm), target)
-
-############################################################
-# 7. SELEÇÃO DE VARIÁVEIS — StepAIC backward
-############################################################
-# [FIX 1] A seleção é realizada sobre o conjunto de TREINO ORIGINAL
-# (normalizado, sem balanceamento), de modo que:
-#   a) O mesmo subconjunto de variáveis é usado por TODOS os modelos.
-#   b) O balanceamento artificial não influencia quais variáveis são selecionadas
-#      (evita viés de seleção introduzido por dados sintéticos).
-#
-# Por que StepAIC e não CFS?
-# CFS foi desenvolvido para algoritmos baseados em filtros (Naïve Bayes,
-# kNN) e tende a remover interações úteis para modelos modernos como
-# XGBoost e Random Forest. StepAIC seleciona com base em critério de
-# informação (AIC), preservando relações lineares relevantes e sendo
-# mais robusto para pipelines com ensemble.
-
 cat("\n[Seleção de Variáveis] Executando StepAIC backward no treino original...\n")
 
+# Função para realizar seleção backward usando o Critério de Informação de Akaike (AIC)
 get_backward_vars <- function(train_df, target_name) {
+  # Ajusta o modelo completo com todas as variáveis
   full_model  <- glm(as.formula(paste(target_name, "~ .")),
                      data = train_df, family = binomial())
+  # stepAIC remove variáveis iterativamente até chegar no melhor conjunto
   step_model  <- stepAIC(full_model, direction = "backward", trace = FALSE)
   vars <- setdiff(names(coef(step_model)), "(Intercept)")
   unique(vars)
 }
 
+# Trata erros eventuais na execução do StepAIC
 selected_vars <- tryCatch(
-  get_backward_vars(train_norm, target),
+  get_backward_vars(train_raw[, c(target, predictor_names)], target),
   error = function(e) {
     cat("StepAIC falhou, usando todas as variáveis:", conditionMessage(e), "\n")
     predictor_names
   }
 )
 selected_vars <- intersect(selected_vars, predictor_names)
+
+# Reverte fallback se remover demais (menos de 3 vars restantes)
 if (length(selected_vars) < 3) selected_vars <- predictor_names
 
 cat("Variáveis selecionadas (StepAIC):", length(selected_vars), "\n")
 cat(paste(selected_vars, collapse = ", "), "\n")
 
-# Aplicar seleção ao treino e ao teste
-train_sel <- train_norm[, c(target, selected_vars)]
-test_sel  <- test_norm[,  c(target, selected_vars)]
+# Criamos a base final de modelagem, com somente as selecionadas
+train_sel <- train_raw[, c(target, selected_vars)]
+test_sel  <- test_raw[,  c(target, selected_vars)]
 
 ############################################################
-# 8. TRATAMENTO DO DESBALANCEAMENTO SEM AMOSTRAGEM SINTÉTICA
+# 7. NORMALIZAÇÃO (APENAS COM TREINO!)
 ############################################################
-# Em vez de gerar amostras sintéticas, esta versão usa o conjunto original
-# do treino e aplica pesos de classe apenas quando o método aceitar.
-# Assim evitamos a distorção que o balanceamento artificial pode causar em modelos de árvore
-# e mantemos a avaliação mais próxima do cenário real.
 
-cat("\n[Desbalanceamento] Usando treino original (sem amostragem sintética).\n")
-cat("Distribuição no treino original:\n"); print(table(train_sel[[target]]))
+# Center e scale: subtrai a média e divide pelo desvio padrão.
+# O cálculo de pré-processamento DEVE basear-se APENAS no treino
+# para evitar vazamento de dados (data leakage) do teste.
+predictors <- setdiff(names(train_sel), target)
+preproc <- preProcess(train_sel[, predictors],
+                      method = c("center","scale"))
 
+train_norm <- predict(preproc, train_sel)
+test_norm  <- predict(preproc, test_sel)
+
+############################################################
+# 8. TRATAMENTO DO DESBALANCEAMENTO
+############################################################
+
+# Em vez de balanceamento por over/undersampling (como SMOTE), 
+# usaremos 'Class Weights' para não modificar os dados reais
 class_tab <- table(train_sel[[target]])
 class_weights <- as.numeric(sum(class_tab) / (length(class_tab) * class_tab))
 names(class_weights) <- names(class_tab)
 
+# Calcula o peso da observação: a classe minoritária recebe peso maior
 obs_weights_train <- ifelse(train_sel[[target]] == "No",
                             class_weights["No"],
                             class_weights["Yes"])
 
-cat("Pesos de classe calculados:\n")
-print(round(class_weights, 4))
-
 ############################################################
-# 9. CONTROLE DE TREINAMENTO (Repeated CV — otimiza AUC)
+# 9. CONTROLE DE TREINAMENTO (Repeated CV)
 ############################################################
-# 10 folds × 3 repetições = 30 estimativas de generalização por modelo.
-# Métrica alvo: ROC (AUC), que é mais informativa que accuracy em dados
-# desbalanceados por considerar o tradeoff sensibilidade/especificidade.
 
+# Configuração global de validação cruzada para o caret.
+# 10 Folds repetidos 5 vezes gera estimativas mais precisas/estáveis.
+# Foco explícito em métricas binárias (ROC/AUC).
 train_ctrl <- trainControl(
-  method          = "repeatedcv",
-  number          = 10,
-  repeats         = 3,
-  classProbs      = TRUE,
+  method = "repeatedcv",
+  number = 10,
+  repeats = 5,
+  classProbs = TRUE,
   summaryFunction = twoClassSummary,
-  savePredictions = "final",
-  allowParallel   = TRUE
+  savePredictions = "final"
 )
 
 ############################################################
 # 10. FUNÇÕES AUXILIARES
 ############################################################
 
+# Função para cálculo do F1-Score a partir da Matriz de Confusão
 f1_score <- function(cm) {
   p <- as.numeric(cm$byClass["Pos Pred Value"])
   r <- as.numeric(cm$byClass["Sensitivity"])
@@ -272,6 +246,7 @@ f1_score <- function(cm) {
   2 * (p * r) / (p + r)
 }
 
+# Encontra o limite (threshold) de corte ótimo (maximizando J de Youden)
 optimize_threshold <- function(obs, prob) {
   roc_obj <- roc(obs, prob, quiet = TRUE)
   thr_df  <- coords(roc_obj, x = "best", best.method = "youden",
@@ -281,6 +256,7 @@ optimize_threshold <- function(obs, prob) {
   thr
 }
 
+# Avalia as probabilidades dada uma linha de corte (thr)
 avaliar_prob <- function(prob, obs, thr = 0.5) {
   pred    <- factor(ifelse(prob > thr, "Yes", "No"), levels = c("No", "Yes"))
   cm      <- confusionMatrix(pred, obs, positive = "Yes")
@@ -288,20 +264,18 @@ avaliar_prob <- function(prob, obs, thr = 0.5) {
   list(cm = cm, auc = as.numeric(auc(roc_obj)), threshold = thr, prob = prob)
 }
 
-# [FIX 2] Função para extrair métricas em TREINO e TESTE separadamente
+# Extrai e formata métricas gerando os dados tabulares (tanto p/ treino como teste)
 extrair_metricas_split <- function(prob_tr, obs_tr, prob_te, obs_te, nome, thr = 0.5) {
   res_tr <- avaliar_prob(prob_tr, obs_tr, thr)
   res_te <- avaliar_prob(prob_te, obs_te, thr)
   data.frame(
     Modelo       = nome,
     Threshold    = round(thr, 3),
-    # Métricas no TREINO
     Train_Acc    = round(as.numeric(res_tr$cm$overall["Accuracy"]),       3),
     Train_AUC    = round(res_tr$auc,                                       3),
     Train_Sens   = round(as.numeric(res_tr$cm$byClass["Sensitivity"]),    3),
     Train_Spec   = round(as.numeric(res_tr$cm$byClass["Specificity"]),    3),
     Train_F1     = round(f1_score(res_tr$cm),                             3),
-    # Métricas no TESTE
     Test_Acc     = round(as.numeric(res_te$cm$overall["Accuracy"]),       3),
     Test_AUC     = round(res_te$auc,                                       3),
     Test_Sens    = round(as.numeric(res_te$cm$byClass["Sensitivity"]),    3),
@@ -311,318 +285,7 @@ extrair_metricas_split <- function(prob_tr, obs_tr, prob_te, obs_te, nome, thr =
   )
 }
 
-############################################################
-# 11. MODELO 1 — RANDOM FOREST (tunado)
-############################################################
-
-cat("\n[1/7] Treinando Random Forest...\n")
-set.seed(123)
-
-rf_grid  <- expand.grid(mtry = c(2, 3, 4, 5, 6))
-model_rf <- train(
-  as.formula(paste(target, "~ .")),
-  data      = train_sel,
-  method    = "rf",
-  trControl = train_ctrl,
-  metric    = "ROC",
-  tuneGrid  = rf_grid,
-  ntree     = 600,
-  classwt   = class_weights
-)
-cat("Melhor mtry (RF):", model_rf$bestTune$mtry, "\n")
-cat("AUC CV (RF):     ", round(max(model_rf$results$ROC), 4), "\n")
-
-############################################################
-# 12. MODELO 2 — XGBOOST DART (nativo)
-############################################################
-# O XGBoost é treinado diretamente pela biblioteca oficial e não via
-# caret, pois o wrapper caret/xgbTree está em modo de manutenção e
-# apresenta incompatibilidades com versões recentes do XGBoost.
-# Isso nos permite usar:
-#   • xgb.cv() com early stopping real (evita overfitting sem fixar nrounds)
-#   • Booster DART (Dropouts meet Multiple Additive Regression Trees),
-#     que aplica dropout em árvores para regularização adicional.
-
-cat("\n[2/7] Treinando XGBoost DART...\n")
-set.seed(123)
-
-get_best_nrounds <- function(cv_obj, fallback = 100L) {
-  log     <- as.data.frame(cv_obj$evaluation_log)
-  auc_col <- grep("test.*auc.*mean", names(log), ignore.case = TRUE, value = TRUE)
-  best    <- if (length(auc_col) > 0) which.max(log[[auc_col[1]]]) else nrow(log)
-  if (is.na(best) || length(best) == 0 || best < 1) best <- fallback
-  as.integer(best)
-}
-
-x_train_xgb <- as.matrix(train_sel[, selected_vars])
-y_train_xgb <- ifelse(train_sel[[target]] == "Yes", 1, 0)
-x_test_xgb  <- as.matrix(test_sel[, selected_vars])
-# Para avaliação no treino com threshold (usamos train_sel original, sem amostragem sintética)
-x_trainorig_xgb <- as.matrix(train_sel[, selected_vars])
-
-dtrain_xgb <- xgb.DMatrix(data = x_train_xgb, label = y_train_xgb, weight = obs_weights_train)
-
-params_dart <- list(
-  booster = "dart", objective = "binary:logistic", eval_metric = "auc",
-  eta = 0.05, max_depth = 6, subsample = 0.8, colsample_bytree = 0.8,
-  gamma = 0, rate_drop = 0.1, skip_drop = 0.5
-)
-
-cv_dart   <- xgb.cv(data = dtrain_xgb, params = params_dart, nrounds = 500,
-                    nfold = 10, early_stopping_rounds = 25, verbose = 0)
-best_dart <- get_best_nrounds(cv_dart)
-cat("Melhor nrounds (DART):", best_dart, "\n")
-
-model_dart <- xgb.train(params = params_dart, data = dtrain_xgb,
-                        nrounds = best_dart, verbose = 0)
-
-############################################################
-# 13. MODELO 3 — XGBOOST GBLINEAR (nativo)
-############################################################
-
-cat("\n[3/7] Treinando XGBoost GBLinear...\n")
-set.seed(123)
-
-params_gblinear <- list(
-  booster = "gblinear", objective = "binary:logistic", eval_metric = "auc",
-  eta = 0.05, lambda = 0.01, alpha = 0.01
-)
-
-cv_gblinear   <- xgb.cv(data = dtrain_xgb, params = params_gblinear, nrounds = 500,
-                        nfold = 10, early_stopping_rounds = 25, verbose = 0)
-best_gblinear <- get_best_nrounds(cv_gblinear)
-cat("Melhor nrounds (GBLinear):", best_gblinear, "\n")
-
-model_gblinear <- xgb.train(params = params_gblinear, data = dtrain_xgb,
-                            nrounds = best_gblinear, verbose = 0)
-
-############################################################
-# 14. MODELO 4 — SVM RADIAL (caret)
-############################################################
-
-cat("\n[4/7] Treinando SVM Radial...\n")
-set.seed(123)
-
-model_svm <- train(
-  as.formula(paste(target, "~ .")),
-  data       = train_sel,
-  method     = "svmRadial",
-  trControl  = train_ctrl,
-  metric     = "ROC",
-  tuneLength = 12,
-  class.weights = class_weights
-)
-cat("Melhor config SVM:\n"); print(model_svm$bestTune)
-
-############################################################
-# 15. MODELO 5 — GBM (caret)
-############################################################
-
-cat("\n[5/7] Treinando GBM...\n")
-set.seed(123)
-
-gbm_grid <- expand.grid(
-  n.trees = c(200, 300, 400), interaction.depth = c(3, 5),
-  shrinkage = c(0.05, 0.1), n.minobsinnode = 10
-)
-
-model_gbm <- train(
-  as.formula(paste(target, "~ .")),
-  data      = train_sel,
-  method    = "gbm",
-  trControl = train_ctrl,
-  metric    = "ROC",
-  tuneGrid  = gbm_grid,
-  verbose   = FALSE,
-  weights   = obs_weights_train
-)
-cat("Melhor config GBM:\n"); print(model_gbm$bestTune)
-
-############################################################
-# 16. MODELO 6 — ELASTIC NET / LOGÍSTICA REGULARIZADA (caret)
-############################################################
-
-cat("\n[6/7] Treinando Elastic Net...\n")
-set.seed(123)
-
-glmnet_grid <- expand.grid(
-  alpha  = c(0, 0.25, 0.5, 0.75, 1),
-  lambda = 10^seq(-4, -1, length.out = 20)
-)
-
-model_glmnet <- train(
-  as.formula(paste(target, "~ .")),
-  data      = train_sel,
-  method    = "glmnet",
-  trControl = train_ctrl,
-  metric    = "ROC",
-  tuneGrid  = glmnet_grid,
-  family    = "binomial",
-  weights   = obs_weights_train
-)
-cat("Melhor config Elastic Net:\n"); print(model_glmnet$bestTune)
-
-############################################################
-# 17. MODELO 7 — REGRESSÃO LOGÍSTICA PURA (sem regularização)
-############################################################
-# Regressão logística simples no conjunto original de treino.
-# Ela funciona como referência direta para comparação com o artigo
-# dos colegas e também serve como baseline interpretável.
-
-cat("\n[7/7] Treinando Regressão Logística pura...\n")
-set.seed(123)
-
-model_lr_nosmt <- train(
-  as.formula(paste(target, "~ .")),
-  data      = train_sel,
-  method    = "glm",
-  family    = "binomial",
-  trControl = train_ctrl,
-  metric    = "ROC",
-  weights   = obs_weights_train
-)
-cat("AUC CV (Regressão Logística):", round(max(model_lr_nosmt$results$ROC), 4), "\n")
-
-############################################################
-# 18. PREDIÇÕES (TREINO E TESTE)
-############################################################
-# [FIX 2] Cada modelo é avaliado tanto no conjunto de TREINO quanto
-# no de TESTE. A diferença entre as métricas de treino e teste indica
-# o grau de overfitting:
-#   • Treino muito superior ao teste → modelo decorou os dados (overfitting)
-#   • Treino e teste próximos      → boa generalização
-
-obs_te <- test_sel[[target]]
-obs_tr <- train_sel[[target]]   # treino ORIGINAL (sem amostragem sintética) para avaliação
-
-# Modelos caret — treino e teste
-prob_rf_te      <- predict(model_rf,       test_sel,  type = "prob")[, "Yes"]
-prob_svm_te     <- predict(model_svm,      test_sel,  type = "prob")[, "Yes"]
-prob_gbm_te     <- predict(model_gbm,      test_sel,  type = "prob")[, "Yes"]
-prob_glmnet_te  <- predict(model_glmnet,   test_sel,  type = "prob")[, "Yes"]
-prob_lr_no_te   <- predict(model_lr_nosmt, test_sel,  type = "prob")[, "Yes"]
-
-prob_rf_tr      <- predict(model_rf,       train_sel, type = "prob")[, "Yes"]
-prob_svm_tr     <- predict(model_svm,      train_sel, type = "prob")[, "Yes"]
-prob_gbm_tr     <- predict(model_gbm,      train_sel, type = "prob")[, "Yes"]
-prob_glmnet_tr  <- predict(model_glmnet,   train_sel, type = "prob")[, "Yes"]
-prob_lr_no_tr   <- predict(model_lr_nosmt, train_sel, type = "prob")[, "Yes"]
-
-# XGBoost — treino (train_sel original) e teste
-prob_dart_te      <- predict(model_dart,    xgb.DMatrix(x_test_xgb))
-prob_gblinear_te  <- predict(model_gblinear,xgb.DMatrix(x_test_xgb))
-prob_dart_tr      <- predict(model_dart,    xgb.DMatrix(x_trainorig_xgb))
-prob_gblinear_tr  <- predict(model_gblinear,xgb.DMatrix(x_trainorig_xgb))
-
-############################################################
-# 19. ENSEMBLE STACKING (ponderado por AUC de CV)
-############################################################
-
-auc_dart_cv <- max(as.data.frame(cv_dart$evaluation_log)$test_auc_mean,    na.rm = TRUE)
-auc_gbl_cv  <- max(as.data.frame(cv_gblinear$evaluation_log)$test_auc_mean, na.rm = TRUE)
-
-auc_cv <- c(
-  RF       = max(model_rf$results$ROC),
-  DART     = auc_dart_cv,
-  GBLINEAR = auc_gbl_cv,
-  SVM      = max(model_svm$results$ROC),
-  GBM      = max(model_gbm$results$ROC),
-  GLMNET   = max(model_glmnet$results$ROC),
-  LR       = max(model_lr_nosmt$results$ROC)
-)
-
-cat("\nAUC de CV por modelo (usados como pesos do ensemble):\n")
-print(round(auc_cv, 4))
-
-weights <- auc_cv / sum(auc_cv)
-
-stack_te <- (prob_rf_te      * weights["RF"]       +
-               prob_dart_te    * weights["DART"]     +
-               prob_gblinear_te* weights["GBLINEAR"] +
-               prob_svm_te     * weights["SVM"]      +
-               prob_gbm_te     * weights["GBM"]      +
-               prob_glmnet_te  * weights["GLMNET"]   +
-               prob_lr_no_te   * weights["LR"])
-
-stack_tr <- (prob_rf_tr      * weights["RF"]       +
-               prob_dart_tr    * weights["DART"]     +
-               prob_gblinear_tr* weights["GBLINEAR"] +
-               prob_svm_tr     * weights["SVM"]      +
-               prob_gbm_tr     * weights["GBM"]      +
-               prob_glmnet_tr  * weights["GLMNET"]   +
-               prob_lr_no_tr   * weights["LR"])
-
-cat("AUC Ensemble Stack (Teste):", round(avaliar_prob(stack_te, obs_te)$auc, 4), "\n")
-
-############################################################
-# 20. OTIMIZAÇÃO DE THRESHOLD (Índice de Youden)
-############################################################
-# O threshold padrão de 0.5 foi definido arbitrariamente e não é ideal
-# para dados desbalanceados. O Índice de Youden (J = Sensibilidade +
-# Especificidade − 1) maximiza o tradeoff entre os dois, encontrando
-# o ponto da curva ROC de maior distância da linha aleatória.
-#
-# IMPORTANTE: os thresholds são calibrados no TREINO e aplicados no TESTE.
-# Calibrar no teste seria data leakage e inflaria artificialmente os resultados.
-
-cat("\n[Threshold] Calibrando thresholds no treino (Youden)...\n")
-
-thr_rf       <- optimize_threshold(obs_tr, prob_rf_tr)
-thr_dart     <- optimize_threshold(obs_tr, prob_dart_tr)
-thr_gblinear <- optimize_threshold(obs_tr, prob_gblinear_tr)
-thr_svm      <- optimize_threshold(obs_tr, prob_svm_tr)
-thr_gbm      <- optimize_threshold(obs_tr, prob_gbm_tr)
-thr_glmnet   <- optimize_threshold(obs_tr, prob_glmnet_tr)
-thr_lr_no    <- optimize_threshold(obs_tr, prob_lr_no_tr)
-thr_stack    <- optimize_threshold(obs_tr, stack_tr)
-
-cat("Thresholds (Youden):\n")
-cat(sprintf("RF=%.3f | DART=%.3f | GBLinear=%.3f | SVM=%.3f\nGBM=%.3f | ElasticNet=%.3f | Regressão Logística=%.3f | Stack=%.3f\n",
-            thr_rf, thr_dart, thr_gblinear, thr_svm,
-            thr_gbm, thr_glmnet, thr_lr_no, thr_stack))
-
-############################################################
-# 21. TABELAS COMPARATIVAS — TREINO vs TESTE
-############################################################
-# [FIX 2] Relatamos métricas nos dois conjuntos (treino e teste) para
-# cada modelo. Isso permite:
-#   • Diagnosticar overfitting (gap treino-teste grande)
-#   • Comparar com os colegas (que reportam apenas acurácia de CV)
-
-cat("\n====== TABELA COMPARATIVA: TREINO vs TESTE (threshold = 0.50) ======\n")
-
-tab_split_base <- bind_rows(
-  extrair_metricas_split(prob_rf_tr,      obs_tr, prob_rf_te,      obs_te, "Random Forest"),
-  extrair_metricas_split(prob_dart_tr,    obs_tr, prob_dart_te,    obs_te, "XGB DART"),
-  extrair_metricas_split(prob_gblinear_tr,obs_tr, prob_gblinear_te,obs_te, "XGB GBLinear"),
-  extrair_metricas_split(prob_svm_tr,     obs_tr, prob_svm_te,     obs_te, "SVM Radial"),
-  extrair_metricas_split(prob_gbm_tr,     obs_tr, prob_gbm_te,     obs_te, "GBM"),
-  extrair_metricas_split(prob_glmnet_tr,  obs_tr, prob_glmnet_te,  obs_te, "Elastic Net"),
-  extrair_metricas_split(prob_lr_no_tr,   obs_tr, prob_lr_no_te,   obs_te, "Regressão Logística"),
-  extrair_metricas_split(stack_tr,        obs_tr, stack_te,        obs_te, "Ensemble Stack")
-) %>% arrange(desc(Test_AUC), desc(Test_Acc))
-
-print(tab_split_base)
-
-cat("\n====== TABELA COMPARATIVA: TREINO vs TESTE (threshold otimizado - Youden) ======\n")
-
-tab_split_thr <- bind_rows(
-  extrair_metricas_split(prob_rf_tr,      obs_tr, prob_rf_te,      obs_te, "Random Forest",   thr = thr_rf),
-  extrair_metricas_split(prob_dart_tr,    obs_tr, prob_dart_te,    obs_te, "XGB DART",         thr = thr_dart),
-  extrair_metricas_split(prob_gblinear_tr,obs_tr, prob_gblinear_te,obs_te, "XGB GBLinear",     thr = thr_gblinear),
-  extrair_metricas_split(prob_svm_tr,     obs_tr, prob_svm_te,     obs_te, "SVM Radial",       thr = thr_svm),
-  extrair_metricas_split(prob_gbm_tr,     obs_tr, prob_gbm_te,     obs_te, "GBM",              thr = thr_gbm),
-  extrair_metricas_split(prob_glmnet_tr,  obs_tr, prob_glmnet_te,  obs_te, "Elastic Net",      thr = thr_glmnet),
-  extrair_metricas_split(prob_lr_no_tr,   obs_tr, prob_lr_no_te,   obs_te, "Regressão Logística", thr = thr_lr_no),
-  extrair_metricas_split(stack_tr,        obs_tr, stack_te,        obs_te, "Ensemble Stack",   thr = thr_stack)
-) %>% arrange(desc(Test_AUC), desc(Test_Acc))
-
-print(tab_split_thr)
-
-############################################################
-# 22. TABELA CONSOLIDADA (apenas TESTE) — compatível com versão anterior
-############################################################
-
+# Extrai e formata as métricas isoladamente para o conjunto de teste
 extrair_metricas_teste <- function(prob_te, obs_te, nome, thr = 0.5) {
   res <- avaliar_prob(prob_te, obs_te, thr)
   data.frame(
@@ -638,209 +301,431 @@ extrair_metricas_teste <- function(prob_te, obs_te, nome, thr = 0.5) {
   )
 }
 
-tab_base <- bind_rows(
-  extrair_metricas_teste(prob_rf_te,      obs_te, "Random Forest"),
-  extrair_metricas_teste(prob_dart_te,    obs_te, "XGB DART"),
-  extrair_metricas_teste(prob_gblinear_te,obs_te, "XGB GBLinear"),
-  extrair_metricas_teste(prob_svm_te,     obs_te, "SVM Radial"),
-  extrair_metricas_teste(prob_gbm_te,     obs_te, "GBM"),
-  extrair_metricas_teste(prob_glmnet_te,  obs_te, "Elastic Net (LR)"),
-  extrair_metricas_teste(prob_lr_no_te,   obs_te, "Regressão Logística"),
-  extrair_metricas_teste(stack_te,        obs_te, "Ensemble Stack")
-) %>% arrange(desc(AUC), desc(Accuracy))
-
-tab_thr <- bind_rows(
-  extrair_metricas_teste(prob_rf_te,      obs_te, "Random Forest (thr opt.)",    thr_rf),
-  extrair_metricas_teste(prob_dart_te,    obs_te, "XGB DART (thr opt.)",         thr_dart),
-  extrair_metricas_teste(prob_gblinear_te,obs_te, "XGB GBLinear (thr opt.)",     thr_gblinear),
-  extrair_metricas_teste(prob_svm_te,     obs_te, "SVM Radial (thr opt.)",       thr_svm),
-  extrair_metricas_teste(prob_gbm_te,     obs_te, "GBM (thr opt.)",              thr_gbm),
-  extrair_metricas_teste(prob_glmnet_te,  obs_te, "Elastic Net (thr opt.)",      thr_glmnet),
-  extrair_metricas_teste(prob_lr_no_te,   obs_te, "Regressão Logística (thr opt.)",     thr_lr_no),
-  extrair_metricas_teste(stack_te,        obs_te, "Ensemble Stack (thr opt.)",   thr_stack)
-) %>% arrange(desc(AUC), desc(Accuracy))
-
 ############################################################
-# 23. IDENTIFICAR MELHOR MODELO
+# 11. MODELO 1 — RANDOM FOREST (com pesos)
 ############################################################
+cat("\n[1/5] Treinando Random Forest...\n")
+set.seed(123)
 
-todos <- bind_rows(tab_base, tab_thr) %>%
-  arrange(desc(AUC), desc(Accuracy), desc(F1))
-
-best_name <- todos$Modelo[1]
-cat("\n>>> MELHOR MODELO:", best_name, "<<<\n")
-cat("AUC:", todos$AUC[1], "| Acc:", todos$Accuracy[1],
-    "| Sensitivity:", todos$Sensitivity[1],
-    "| Specificity:", todos$Specificity[1],
-    "| F1:", todos$F1[1], "\n")
-
-best_prob_te <- switch(
-  gsub(" \\(thr opt\\.\\)", "", best_name),
-  "Random Forest"    = prob_rf_te,
-  "XGB DART"         = prob_dart_te,
-  "XGB GBLinear"     = prob_gblinear_te,
-  "SVM Radial"       = prob_svm_te,
-  "GBM"              = prob_gbm_te,
-  "Elastic Net"      = prob_glmnet_te,
-  "Regressão Logística" = prob_lr_no_te,
-  "Ensemble Stack"   = stack_te,
-  stack_te
+# RandomForest comumente dispensa normalização. Usamos train_sel (não-norm).
+# 'classwt' lida com as classes desbalanceadas.
+model_rf <- train(
+  Selector ~ .,
+  data = train_sel,
+  method = "rf",
+  metric = "ROC",
+  trControl = train_ctrl,
+  ntree = 800,
+  classwt = c("No" = 2.5, "Yes" = 1)
 )
-best_thr  <- todos$Threshold[1]
-best_pred <- factor(ifelse(best_prob_te > best_thr, "Yes", "No"), levels = c("No", "Yes"))
-cm_best   <- confusionMatrix(best_pred, obs_te, positive = "Yes")
-roc_best  <- roc(obs_te, best_prob_te, quiet = TRUE)
 
 ############################################################
-# 24. GRÁFICOS
+# 12. MODELO 2 — ELASTIC NET
 ############################################################
+cat("\n[2/5] Treinando Elastic Net...\n")
+set.seed(123)
 
-# ── 24.1 Comparativo Base (Teste) ──
-metricas_long <- tab_base %>%
-  dplyr::select(Modelo, Accuracy, AUC, F1) %>%
-  pivot_longer(cols = c(Accuracy, AUC, F1), names_to = "Metrica", values_to = "Valor")
+# Regressão linear regularizada via glmnet, sensível a escala (usando train_norm)
+# Testamos combinações de L1 e L2 na grid search (alpha = 0 a 1).
+grid_glmnet <- expand.grid(
+  alpha  = seq(0,1,0.1),
+  lambda = 10^seq(-4,1,length=20)
+)
 
-p_base_chart <- ggplot(metricas_long,
-                       aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
-  geom_col(position = position_dodge(0.8), width = 0.7) +
-  scale_y_continuous(limits = c(0, 1)) +
-  coord_flip() +
-  theme_minimal(base_size = 11) +
-  labs(title = "Comparação Base dos Algoritmos — Conjunto de TESTE (thr = 0.50)",
-       x = NULL, y = "Score")
-print(p_base_chart)
+model_enet <- train(
+  Selector ~ .,
+  data = train_norm,
+  method = "glmnet",
+  metric = "ROC",
+  trControl = train_ctrl,
+  tuneGrid = grid_glmnet
+)
 
-# ── 24.2 Treino vs Teste por modelo (gap de overfitting) ──
-gap_df <- tab_split_base %>%
-  dplyr::select(Modelo, Train_AUC, Test_AUC) %>%
-  pivot_longer(cols = c(Train_AUC, Test_AUC), names_to = "Conjunto", values_to = "AUC") %>%
-  mutate(Conjunto = ifelse(Conjunto == "Train_AUC", "Treino", "Teste"))
+############################################################
+# 13. MODELO 3 — REGRESSÃO LOGÍSTICA
+############################################################
+cat("\n[3/5] Treinando Regressão Logística...\n")
+set.seed(123)
 
-p_gap <- ggplot(gap_df, aes(x = reorder(Modelo, AUC), y = AUC, fill = Conjunto)) +
-  geom_col(position = position_dodge(0.7), width = 0.65) +
-  scale_fill_manual(values = c("Treino" = "#2E8B57", "Teste" = "#4472C4")) +
-  coord_flip() +
-  theme_minimal(base_size = 11) +
-  labs(
-    title    = "AUC Treino vs Teste por Modelo",
-    subtitle = "Gap pequeno = boa generalização | Gap grande = overfitting",
-    x = NULL, y = "AUC", fill = "Conjunto"
+# Regressão logística tradicional como baseline interpretável (usando train_norm)
+model_log <- train(
+  Selector ~ .,
+  data = train_norm,
+  method = "glm",
+  family = "binomial",
+  metric = "ROC",
+  trControl = train_ctrl
+)
+
+############################################################
+# 14. MODELO 4 — SVM
+############################################################
+cat("\n[4/5] Treinando SVM...\n")
+set.seed(123)
+
+# SVM com kernel radial, também sensível a escala.
+# Testamos sigmas (suavidade da fronteira) e Custos (tolerância a margem)
+grid_svm <- expand.grid(
+  sigma = c(0.01,0.05,0.1,0.2),
+  C     = c(0.25,0.5,1,2,4)
+)
+
+model_svm <- train(
+  Selector ~ .,
+  data = train_norm,
+  method = "svmRadial",
+  metric = "ROC",
+  trControl = train_ctrl,
+  tuneGrid = grid_svm
+)
+
+############################################################
+# 15. MODELO 5 — XGBOOST (Grid Search + Platt Scaling)
+############################################################
+cat("\n[5/5] Treinando XGBoost (gbtree)...\n")
+set.seed(123)
+
+# Converte os dados para matrizes esparsas otimizadas próprias do XGBoost
+x_train <- model.matrix(Selector ~ . -1, train_sel)
+x_test  <- model.matrix(Selector ~ . -1, test_sel)
+
+y_train <- ifelse(train_sel$Selector == "Yes", 1, 0)
+y_test  <- ifelse(test_sel$Selector == "Yes", 1, 0)
+
+dtrain <- xgb.DMatrix(data = x_train, label = y_train)
+dtest  <- xgb.DMatrix(data = x_test,  label = y_test)
+
+# Definimos um Grid massivo para afinar hiperparâmetros
+grid <- expand.grid(
+  eta = c(0.01, 0.05, 0.1),
+  max_depth = c(2,3,4),
+  min_child_weight = c(1,3,5),
+  subsample = c(0.7, 0.85, 1),
+  colsample_bytree = c(0.7, 0.85, 1)
+)
+
+best_auc <- 0
+best_params <- list()
+best_nrounds <- 300   # valor default seguro
+
+# Looping explorando e treinando validações cruzadas
+for(i in 1:nrow(grid)){
+  
+  params <- list(
+    booster = "gbtree",
+    objective = "binary:logistic",
+    eval_metric = "auc",
+    eta = grid$eta[i],
+    max_depth = grid$max_depth[i],
+    min_child_weight = grid$min_child_weight[i],
+    subsample = grid$subsample[i],
+    colsample_bytree = grid$colsample_bytree[i]
   )
-print(p_gap)
+  
+  # xgb.cv descobre o número exato de iterações sem overfit (early_stopping)
+  cv <- xgb.cv(
+    params = params,
+    data = dtrain,
+    nrounds = 1000,
+    nfold = 10,
+    stratified = TRUE,
+    early_stopping_rounds = 50,
+    maximize = TRUE,
+    verbose = 0
+  )
+  
+  auc <- max(cv$evaluation_log$test_auc_mean)
 
-# ── 24.3 Comparativo threshold otimizado ──
-metricas_thr_long <- tab_thr %>%
-  mutate(Modelo = gsub(" \\(thr opt\\.\\)", "", Modelo)) %>%
-  dplyr::select(Modelo, Accuracy, AUC, F1) %>%
-  pivot_longer(cols = c(Accuracy, AUC, F1), names_to = "Metrica", values_to = "Valor")
+  nrounds_cv <- ifelse(is.null(cv$best_iteration),
+                       which.max(cv$evaluation_log$test_auc_mean),
+                       cv$best_iteration)
+  
+  # Salva o melhor parâmetro encontrado até agora
+  if(auc > best_auc){
+    best_auc <- auc
+    best_params <- params
+    best_nrounds <- nrounds_cv
+  }
+}
 
-p_thr_chart <- ggplot(metricas_thr_long,
-                      aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
-  geom_col(position = position_dodge(0.8), width = 0.7) +
-  scale_y_continuous(limits = c(0, 1)) +
-  coord_flip() +
-  theme_minimal(base_size = 11) +
-  labs(title = "Comparação com Threshold Otimizado (Youden) — Conjunto de TESTE",
-       x = NULL, y = "Score")
-print(p_thr_chart)
+cat("Melhor AUC CV XGB:", best_auc, "\n")
+cat("Melhor nrounds:", best_nrounds, "\n")
 
-# ── 24.4 Curva ROC do Melhor Modelo ──
-roc_df <- data.frame(FPR = 1 - roc_best$specificities, TPR = roc_best$sensitivities)
+# Treina o modelo final do XGBoost usando os hyperparametros descobertos
+model_xgb <- xgb.train(
+  params = best_params,
+  data = dtrain,
+  nrounds = best_nrounds,
+  verbose = 0
+)
 
-p_roc <- ggplot(roc_df, aes(x = FPR, y = TPR)) +
-  geom_line(color = "firebrick", linewidth = 1.2) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray60") +
-  theme_minimal(base_size = 12) +
-  labs(title    = paste0("Curva ROC — ", best_name),
-       subtitle = paste0("AUC = ", round(as.numeric(auc(roc_best)), 4)),
-       x = "1 - Especificidade (FPR)", y = "Sensibilidade (TPR)")
-print(p_roc)
+# ============================================
+# Calibração de probabilidade (Platt Scaling)
+# ============================================
 
-# ── 24.5 Matriz de Confusão ──
-cm_df <- as.data.frame(cm_best$table)
-colnames(cm_df) <- c("Predito", "Real", "Freq")
+# XGBoost entrega scores bons para ranking (AUC), mas probabilidades frequentemente descalibradas.
+# Extraímos as previsões puras
+prob_train_raw <- predict(model_xgb, dtrain)
+prob_test_raw  <- predict(model_xgb, dtest)
 
-p_cm <- ggplot(cm_df, aes(x = Predito, y = Real, fill = Freq)) +
+# Ajustamos uma regressão logística (GLM) transformando os raw scores em "Probabilidades Reais"
+calibration_model <- glm(
+  y_train ~ prob_train_raw,
+  family = binomial
+)
+
+# Aplicar o modelo de calibração para gerar predições escalonadas corretas
+prob_xgb_train <- predict(
+  calibration_model,
+  newdata = data.frame(prob_train_raw = prob_train_raw),
+  type = "response"
+)
+
+prob_xgb_test <- predict(
+  calibration_model,
+  newdata = data.frame(prob_train_raw = prob_test_raw),
+  type = "response"
+)
+
+############################################################
+# 16. PREDIÇÕES (TREINO E TESTE)
+############################################################
+
+obs_te <- test_sel[[target]]
+obs_tr <- train_sel[[target]]
+
+# Coletando a probabilidade ('Yes') prevista pelos demais modelos
+prob_rf_te   <- predict(model_rf,   test_sel,  type = "prob")[, "Yes"]
+prob_enet_te <- predict(model_enet, test_norm, type = "prob")[, "Yes"]
+prob_log_te  <- predict(model_log,  test_norm, type = "prob")[, "Yes"]
+prob_svm_te  <- predict(model_svm,  test_norm, type = "prob")[, "Yes"]
+
+prob_rf_tr   <- predict(model_rf,   train_sel, type = "prob")[, "Yes"]
+prob_enet_tr <- predict(model_enet, train_norm, type = "prob")[, "Yes"]
+prob_log_tr  <- predict(model_log,  train_norm, type = "prob")[, "Yes"]
+prob_svm_tr  <- predict(model_svm,  train_norm, type = "prob")[, "Yes"]
+
+############################################################
+# 17. ENSEMBLE STACKING (ponderado por AUC)
+############################################################
+
+# Reune o máximo do Cross Validation de cada modelo para utilizarmos como peso
+auc_cv <- c(
+  RF       = max(model_rf$results$ROC),
+  ENET     = max(model_enet$results$ROC),
+  LOG      = max(model_log$results$ROC),
+  SVM      = max(model_svm$results$ROC),
+  XGB      = best_auc
+)
+
+cat("\nAUC de CV/Teste por modelo (pesos do ensemble):\n")
+print(round(auc_cv, 4))
+
+# Converte os AUCs em proporções
+weights <- auc_cv / sum(auc_cv)
+
+# Modelo final combinando os 5 preditores dando mais peso aos de melhor AUC
+stack_te <- (prob_rf_te    * weights["RF"] +
+             prob_enet_te  * weights["ENET"] +
+             prob_log_te   * weights["LOG"] +
+             prob_svm_te   * weights["SVM"] +
+             prob_xgb_test * weights["XGB"])
+
+stack_tr <- (prob_rf_tr     * weights["RF"] +
+             prob_enet_tr   * weights["ENET"] +
+             prob_log_tr    * weights["LOG"] +
+             prob_svm_tr    * weights["SVM"] +
+             prob_xgb_train * weights["XGB"])
+
+cat("AUC Ensemble Stack (Teste):", round(avaliar_prob(stack_te, obs_te)$auc, 4), "\n")
+
+############################################################
+# 18. OTIMIZAÇÃO DE THRESHOLD (Índice de Youden)
+############################################################
+# Modelos predizem de 0 a 1. Na medicina 50% pode ser arriscado.
+# O 'Índice de Youden' acha o limiar que equilibra Falso Positivo e Falso Negativo.
+cat("\n[Threshold] Calibrando thresholds no treino (Youden)...\n")
+
+thr_rf   <- optimize_threshold(obs_tr, prob_rf_tr)
+thr_enet <- optimize_threshold(obs_tr, prob_enet_tr)
+thr_log  <- optimize_threshold(obs_tr, prob_log_tr)
+thr_svm  <- optimize_threshold(obs_tr, prob_svm_tr)
+thr_xgb  <- optimize_threshold(obs_tr, prob_xgb_train)
+thr_stack<- optimize_threshold(obs_tr, stack_tr)
+
+cat("Thresholds (Youden):\n")
+cat(sprintf("RF=%.3f | ElasticNet=%.3f | Reg.Log=%.3f | SVM=%.3f | XGB=%.3f | Stack=%.3f\n",
+            thr_rf, thr_enet, thr_log, thr_svm, thr_xgb, thr_stack))
+
+############################################################
+# GRÁFICO 1 — Curvas ROC comparando modelos
+############################################################
+# Avalia a capacidade de distinção entre classes para cada modelo através da Curva ROC
+roc_rf    <- roc(obs_te, prob_rf_te, quiet = TRUE)
+roc_enet  <- roc(obs_te, prob_enet_te, quiet = TRUE)
+roc_log   <- roc(obs_te, prob_log_te, quiet = TRUE)
+roc_svm   <- roc(obs_te, prob_svm_te, quiet = TRUE)
+roc_xgb   <- roc(obs_te, prob_xgb_test, quiet = TRUE)
+roc_stack <- roc(obs_te, stack_te, quiet = TRUE)
+
+plot(roc_rf, col = "green", main = "Curvas ROC - Comparação de Modelos")
+lines(roc_enet, col = "blue")
+lines(roc_log, col = "cyan")
+lines(roc_svm, col = "purple")
+lines(roc_xgb, col = "red", lwd = 2)
+lines(roc_stack, col = "orange", lwd = 2)
+legend("bottomright", legend = c("Random Forest", "Elastic Net", "Reg. Logística", "SVM", "XGBoost", "Ensemble Stack"),
+       col = c("green", "blue", "cyan", "purple", "red", "orange"), lwd = 2)
+
+############################################################
+# GRÁFICO 2 — Importância das Variáveis (XGBoost)
+############################################################
+# Analisa quais variáveis o XGBoost utilizou com mais peso nos ganhos de decisão das árvores
+importance_matrix <- xgb.importance(feature_names = colnames(dtrain), model = model_xgb)
+xgb.plot.importance(importance_matrix, top_n = 10, measure = "Gain", 
+                    main = "Importância das Variáveis (XGBoost)")
+
+############################################################
+# GRÁFICO 3 — Distribuição das probabilidades previstas
+############################################################
+# Exibe a separação das probabilidades previstas pelo modelo entre pacientes Doentes x Saudáveis
+prob_df <- data.frame(
+  Probabilidade = prob_xgb_test,
+  ClasseReal = obs_te
+)
+
+p_prob <- ggplot(prob_df, aes(x = Probabilidade, fill = ClasseReal)) +
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Distribuição das Probabilidades Previstas (XGBoost)",
+       x = "Probabilidade de Doença Hepática",
+       y = "Densidade") +
+  geom_vline(xintercept = thr_xgb, linetype = "dashed", color = "red")
+print(p_prob)
+
+############################################################
+# GRÁFICO 4 — Matriz de confusão XGBoost
+############################################################
+# Gera visualização para os Casos de Falso Positivo/Negativo com base no limiar calibrado
+pred_xgb_class <- factor(ifelse(prob_xgb_test > thr_xgb, "Yes", "No"), levels = c("No", "Yes"))
+cm_xgb <- confusionMatrix(pred_xgb_class, obs_te, positive = "Yes")
+
+cm_df_xgb <- as.data.frame(cm_xgb$table)
+colnames(cm_df_xgb) <- c("Predito", "Real", "Freq")
+
+p_cm <- ggplot(cm_df_xgb, aes(x = Predito, y = Real, fill = Freq)) +
   geom_tile(color = "white") +
   geom_text(aes(label = Freq), color = "white", size = 6, fontface = "bold") +
   scale_fill_gradient(low = "#5DA5DA", high = "#0B3C5D") +
   theme_minimal(base_size = 12) +
-  labs(title    = paste0("Matriz de Confusão — ", best_name),
-       subtitle = paste0("Threshold = ", round(best_thr, 3)))
+  labs(title = "Matriz de Confusão — XGBoost",
+       subtitle = paste0("Threshold = ", round(thr_xgb, 3)))
 print(p_cm)
 
-# ── 24.6 Importância das Variáveis (RF e XGB DART) ──
-imp_df <- varImp(model_rf, scale = TRUE)$importance %>%
-  rownames_to_column("Variavel") %>%
-  mutate(Importancia = rowMeans(dplyr::select(., -Variavel))) %>%
-  dplyr::select(Variavel, Importancia) %>%
-  arrange(desc(Importancia)) %>% slice_head(n = 15)
-
-p_imp <- ggplot(imp_df, aes(x = reorder(Variavel, Importancia), y = Importancia)) +
-  geom_col(fill = "#2E8B57", width = 0.8) +
-  coord_flip() + theme_minimal(base_size = 11) +
-  labs(title = "Importância das Variáveis — Random Forest", x = NULL, y = "Importância")
-print(p_imp)
-
-imp_dart <- xgb.importance(model = model_dart) %>% as.data.frame() %>% slice_head(n = 15)
-
-p_imp_dart <- ggplot(imp_dart, aes(x = reorder(Feature, Gain), y = Gain)) +
-  geom_col(fill = "#E07B39", width = 0.8) +
-  coord_flip() + theme_minimal(base_size = 11) +
-  labs(title = "Importância das Variáveis — XGB DART", x = NULL, y = "Gain")
-print(p_imp_dart)
-
-# ── 24.7 Impacto do Limiar no Melhor Modelo ──
-thr_grid <- seq(0.05, 0.95, by = 0.01)
-thr_impact <- lapply(thr_grid, function(thr) {
-  p  <- factor(ifelse(best_prob_te > thr, "Yes", "No"), levels = c("No", "Yes"))
-  cm <- confusionMatrix(p, obs_te, positive = "Yes")
-  data.frame(Threshold = thr,
-             Accuracy    = as.numeric(cm$overall["Accuracy"]),
-             Sensitivity = as.numeric(cm$byClass["Sensitivity"]),
-             Specificity = as.numeric(cm$byClass["Specificity"]),
-             F1          = f1_score(cm))
-}) %>% bind_rows() %>%
-  pivot_longer(c(Accuracy, Sensitivity, Specificity, F1),
-               names_to = "Metrica", values_to = "Valor")
-
-p_thr_impact <- ggplot(thr_impact, aes(x = Threshold, y = Valor, color = Metrica)) +
-  geom_line(linewidth = 1) +
-  geom_vline(xintercept = best_thr, linetype = "dashed", color = "black") +
-  theme_minimal(base_size = 11) +
-  labs(title    = paste0("Impacto do Limiar — ", best_name),
-       subtitle = paste0("Limiar otimizado = ", round(best_thr, 3)),
-       x = "Threshold", y = "Score", color = "Métrica")
-print(p_thr_impact)
-
 ############################################################
-# 25. COMPARAÇÃO COM O ARTIGO DOS COLEGAS
+# GRÁFICO 5 — Comparação de desempenho
 ############################################################
-
-colegas <- data.frame(
-  Fonte  = "Colegas (artigo)",
-  Modelo = c("Regressão Logística", "GLM", "SVM", "Random Forest",
-             "SVM Class Weights", "ANN", "Gaussian NB"),
-  ACC_SemCFS = c(75.3, 73.0, 70.7, 70.7, 71.3, 69.5, 59.8)
+# Exibe um comparativo em barra demonstrando a superioridade (ou igualdade) via AUC entre os modelos
+auc_df <- data.frame(
+  Modelo = c("Random Forest", "Elastic Net", "Regressão Logística", "SVM Radial", "XGBoost gbtree", "Ensemble Stack"),
+  AUC = c(roc_rf$auc, roc_enet$auc, roc_log$auc, roc_svm$auc, roc_xgb$auc, roc_stack$auc)
 )
 
-cat("\n=== REFERÊNCIA DOS COLEGAS (Acurácia sem CFS, base completa) ===\n")
-print(colegas)
-
-cat("\n=== COMPARATIVO NOSSO vs COLEGAS ===\n")
-cat("Melhor dos colegas: RL = 75.3%\n")
-cat(sprintf("Nosso melhor Accuracy (base):         %.1f%%\n", max(tab_base$Accuracy) * 100))
-cat(sprintf("Nosso melhor Accuracy (thr opt.):     %.1f%%\n", max(tab_thr$Accuracy) * 100))
-cat(sprintf("Nosso melhor AUC:                     %.4f\n",   max(tab_thr$AUC)))
-cat(sprintf("Nosso melhor F1:                      %.3f\n",   max(tab_thr$F1)))
-cat(sprintf("Regressão Logística — Accuracy (base):       %.1f%%\n",
-            tab_base$Accuracy[tab_base$Modelo == "Regressão Logística"] * 100))
-cat(sprintf("Regressão Logística — Accuracy (thr opt.):   %.1f%%\n",
-            tab_thr$Accuracy[grepl("Regressão Logística", tab_thr$Modelo)] * 100))
+p_auc <- ggplot(auc_df, aes(x = reorder(Modelo, AUC), y = AUC, fill = Modelo)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  labs(title = "Comparação de Desempenho (AUC)",
+       x = "Modelo",
+       y = "Área sob a Curva (AUC)") +
+  geom_text(aes(label = round(AUC, 3)), hjust = -0.2, size = 4) +
+  ylim(0, 1)
+print(p_auc)
 
 ############################################################
-# 26. RESULTADO FINAL CONSOLIDADO
+# GRÁFICO 6 — Variáveis Selecionadas para Modelagem (StepAIC)
 ############################################################
+# Lista todas as variáveis construídas e destaca quais foram selecionadas
+todas_vars <- setdiff(names(train_raw), target)
+status_vars <- data.frame(
+  Variavel = todas_vars,
+  Status = ifelse(todas_vars %in% selected_vars, "Selecionada", "Descartada (StepAIC / NZV / Corr)")
+)
+
+p_selecao <- ggplot(status_vars, aes(x = reorder(Variavel, Status == "Selecionada"), y = 1, fill = Status)) +
+  geom_tile(color = "white", linewidth = 1) +
+  scale_fill_manual(values = c("Selecionada" = "#2E8B57", "Descartada (StepAIC / NZV / Corr)" = "#E07B39")) +
+  coord_flip() +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid = element_blank()) +
+  labs(title = "Status das Variáveis Pós-Seleção",
+       subtitle = paste("Total Selecionadas:", length(selected_vars)),
+       x = "Variável",
+       y = NULL,
+       fill = "Status")
+print(p_selecao)
+
+############################################################
+# 19. TABELAS COMPARATIVAS — TREINO vs TESTE
+############################################################
+# Estas tabelas expõem as métricas de treino contra as de teste.
+# Modelos com 90% treino e 70% teste configuram clássicos de 'Overfitting'.
+cat("\n====== TABELA COMPARATIVA: TREINO vs TESTE (threshold = 0.50) ======\n")
+
+tab_split_base <- bind_rows(
+  extrair_metricas_split(prob_rf_tr,     obs_tr, prob_rf_te,     obs_te, "Random Forest"),
+  extrair_metricas_split(prob_enet_tr,   obs_tr, prob_enet_te,   obs_te, "Elastic Net"),
+  extrair_metricas_split(prob_log_tr,    obs_tr, prob_log_te,    obs_te, "Regressão Logística"),
+  extrair_metricas_split(prob_svm_tr,    obs_tr, prob_svm_te,    obs_te, "SVM Radial"),
+  extrair_metricas_split(prob_xgb_train, obs_tr, prob_xgb_test,  obs_te, "XGBoost gbtree"),
+  extrair_metricas_split(stack_tr,       obs_tr, stack_te,       obs_te, "Ensemble Stack")
+) %>% arrange(desc(Test_AUC), desc(Test_Acc))
+
+print(tab_split_base)
+
+cat("\n====== TABELA COMPARATIVA: TREINO vs TESTE (threshold otimizado - Youden) ======\n")
+
+tab_split_thr <- bind_rows(
+  extrair_metricas_split(prob_rf_tr,     obs_tr, prob_rf_te,     obs_te, "Random Forest", thr = thr_rf),
+  extrair_metricas_split(prob_enet_tr,   obs_tr, prob_enet_te,   obs_te, "Elastic Net",   thr = thr_enet),
+  extrair_metricas_split(prob_log_tr,    obs_tr, prob_log_te,    obs_te, "Regressão Logística", thr = thr_log),
+  extrair_metricas_split(prob_svm_tr,    obs_tr, prob_svm_te,    obs_te, "SVM Radial",    thr = thr_svm),
+  extrair_metricas_split(prob_xgb_train, obs_tr, prob_xgb_test,  obs_te, "XGBoost gbtree", thr = thr_xgb),
+  extrair_metricas_split(stack_tr,       obs_tr, stack_te,       obs_te, "Ensemble Stack",thr = thr_stack)
+) %>% arrange(desc(Test_AUC), desc(Test_Acc))
+
+print(tab_split_thr)
+
+############################################################
+# 20. TABELA CONSOLIDADA (apenas TESTE)
+############################################################
+# Resumo focado puramente na predição cega (conjunto teste isolado)
+
+tab_base <- bind_rows(
+  extrair_metricas_teste(prob_rf_te,     obs_te, "Random Forest"),
+  extrair_metricas_teste(prob_enet_te,   obs_te, "Elastic Net"),
+  extrair_metricas_teste(prob_log_te,    obs_te, "Regressão Logística"),
+  extrair_metricas_teste(prob_svm_te,    obs_te, "SVM Radial"),
+  extrair_metricas_teste(prob_xgb_test,  obs_te, "XGBoost gbtree"),
+  extrair_metricas_teste(stack_te,       obs_te, "Ensemble Stack")
+) %>% arrange(desc(AUC), desc(Accuracy))
+
+tab_thr <- bind_rows(
+  extrair_metricas_teste(prob_rf_te,     obs_te, "Random Forest (thr opt.)",    thr_rf),
+  extrair_metricas_teste(prob_enet_te,   obs_te, "Elastic Net (thr opt.)",      thr_enet),
+  extrair_metricas_teste(prob_log_te,    obs_te, "Regressão Logística (thr opt.)", thr_log),
+  extrair_metricas_teste(prob_svm_te,    obs_te, "SVM Radial (thr opt.)",       thr_svm),
+  extrair_metricas_teste(prob_xgb_test,  obs_te, "XGBoost gbtree (thr opt.)", thr_xgb),
+  extrair_metricas_teste(stack_te,       obs_te, "Ensemble Stack (thr opt.)",   thr_stack)
+) %>% arrange(desc(AUC), desc(Accuracy))
+
+############################################################
+# 21. RESULTADO FINAL CONSOLIDADO
+############################################################
+# Impressão de relatório em tela da melhor combinação geral
 
 cat("\n")
 cat("=============================================================\n")
@@ -853,11 +738,11 @@ print(tab_split_base)
 cat("\n--- Tabela 2: Treino vs Teste — threshold otimizado (Youden) ---\n")
 print(tab_split_thr)
 
-cat("\n--- Tabela 3: Apenas Teste — baseline ---\n")
-print(tab_base)
+# Determinando o melhor modelo generalista (AUC + Acc) para printar separadamente
+todos <- bind_rows(tab_base, tab_thr) %>%
+  arrange(desc(AUC), desc(Accuracy), desc(F1))
 
-cat("\n--- Tabela 4: Apenas Teste — threshold otimizado ---\n")
-print(tab_thr)
+best_name <- todos$Modelo[1]
 
 cat("\n--- Melhor Modelo ---\n")
 cat("Modelo:", best_name, "\n")
